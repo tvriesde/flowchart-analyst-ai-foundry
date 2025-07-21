@@ -108,6 +108,7 @@ Program.cs
 Supporting Files:
 ├── appsettings.json (Azure OpenAI Configuration)
 ├── ImagesToAgent.csproj (NuGet Dependencies)
+├── .gitignore (.NET Standard Git Ignore Rules)
 └── Helper Methods (MIME Type, Format Validation)
 ```
 
