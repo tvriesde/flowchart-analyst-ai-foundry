@@ -20,6 +20,11 @@ Update `appsettings_example.json` with your Azure Foundry resource details:
     "VisionAgentId": ""
   }
 }
+```
+
+Then, rename it to `appsettings.json`:
+
+```bash
 Rename to appsettings.json
 
 ## � Authentication
