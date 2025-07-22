@@ -1,4 +1,4 @@
-# 🤖 VisionAgent - Semantic Kernel ChatCompletionAgent Sample
+# 🤖 VisionAgent - Semantic Kernel AI Foundry ChatCompletionAgent Sample 
 
 A simple console application demonstrating **Semantic Kernel ChatCompletionAgent** with **Azure AI Foundry** for image analysis.
 
