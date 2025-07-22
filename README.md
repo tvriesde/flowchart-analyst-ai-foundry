@@ -1,19 +1,26 @@
 # 🤖 VisionAgent - Semantic Kernel ChatCompletionAgent Sample
 
-A simple console application demonstrating **Semantic Kernel ChatCompletionAgent** with **Azure OpenAI** for image analysis.
+A simple console application demonstrating **Semantic Kernel ChatCompletionAgent** with **Azure AI Foundry** for image analysis.
+
+Requires an Azure AI Foundry resource with a **Vision Agent** and **Review Agent**. Define these agents to your liking in AI Foundry, and use the agent IDs in the configuration.
 
 ## ⚙️ Configuration
 
-Update `appsettings.json` with your Azure OpenAI resource details:
+Update `appsettings_example.json` with your Azure Foundry resource details:
 
 ```json
 {
-  "AzureOpenAI": {
-    "Endpoint": "https://your-resource.openai.azure.com/",
+  "AzureAI": {
+    "Endpoint": "https://<your-custom-endpoint>.cognitiveservices.azure.com/",
     "DeploymentName": "gpt-4o"
+  },
+  "AzureAIProject": {
+    "Endpoint": "https://<your-custom-endpoint>.services.ai.azure.com/api/projects/<your-project-id>",
+    "ReviewAgentId": "",
+    "VisionAgentId": ""
   }
 }
-```
+Rename to appsettings.json
 
 ## � Authentication
 
@@ -29,4 +36,7 @@ az login
 dotnet run
 ```
 
-Enter an image file path when prompted and the VisionAgent will analyze it.
+Modify the script imagePath variable to an image containing a flowchart of your choice
+
+==========================
+https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-types/azure-ai-agent?pivots=programming-language-csharp

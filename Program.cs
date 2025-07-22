@@ -1,9 +1,12 @@
 ﻿using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents;
 using Microsoft.SemanticKernel.ChatCompletion;
-using Microsoft.SemanticKernel.Connectors.OpenAI;
 using Azure.Identity;
 using Microsoft.Extensions.Configuration;
+using Microsoft.SemanticKernel.Agents.Chat;
+using Microsoft.SemanticKernel.Agents.AzureAI;
+using Azure.AI.Agents.Persistent;
+using Azure.AI.Projects;
 
 #pragma warning disable SKEXP0110 // Suppress experimental API warnings for Agents
 
@@ -16,6 +19,18 @@ var configuration = new ConfigurationBuilder()
 // Get Azure OpenAI configuration from appsettings
 var endpoint = configuration["AzureOpenAI:Endpoint"];
 var deploymentName = configuration["AzureOpenAI:DeploymentName"];
+var projectEndpoint = configuration["AzureAIProject:Endpoint"];
+var reviewAgentId = configuration["AzureAIProject:ReviewAgentId"];
+var visionAgentId = configuration["AzureAIProject:VisionAgentId"];
+
+PersistentAgentsClient client = AzureAIAgent.CreateAgentsClient(projectEndpoint, new AzureCliCredential());
+
+//get Agents
+PersistentAgent reviewAgentDefinition = await client.Administration.GetAgentAsync(reviewAgentId);
+PersistentAgent visionAgentDefinition = await client.Administration.GetAgentAsync(visionAgentId);
+
+AzureAIAgent reviewAgent = new(reviewAgentDefinition, client);
+AzureAIAgent visionAgent = new(visionAgentDefinition, client);
 
 if (string.IsNullOrEmpty(endpoint) || string.IsNullOrEmpty(deploymentName))
 {
@@ -42,156 +57,71 @@ try
 
     var kernel = kernelBuilder.Build();
 
-    // Create VisionAgent using ChatCompletionAgent
-    var visionAgent = CreateVisionAgent(kernel);
+    var imagePath = "flowchart.png";    
+    // Read image file
+    var imageBytes = await File.ReadAllBytesAsync(imagePath);
+    var mimeType = GetMimeType(Path.GetExtension(imagePath));
 
-    Console.WriteLine($"✅ VisionAgent '{visionAgent.Name}' created successfully");
-    Console.WriteLine();
-
-    // Interactive loop - Agent conversation
-    while (true)
-    {
-        Console.Write("Enter image file path (or 'quit' to exit): ");
-        var input = Console.ReadLine()?.Trim();
-
-        if (string.IsNullOrEmpty(input) || input.Equals("quit", StringComparison.OrdinalIgnoreCase))
-            break;
-
-        if (!File.Exists(input))
-        {
-            Console.WriteLine("❌ File not found. Please try again.");
-            continue;
-        }
-
-        if (!IsSupportedImageFormat(input))
-        {
-            Console.WriteLine("❌ Unsupported image format. Supported: JPG, PNG, GIF, BMP, WEBP, TIFF");
-            continue;
-        }
-
-        try
-        {
-            Console.Write("Your question (or press Enter for 'What's in this image?'): ");
-            var question = Console.ReadLine()?.Trim();
-            if (string.IsNullOrEmpty(question))
-                question = "What's in this image?";
-
-            Console.WriteLine("🔍 VisionAgent is analyzing the image...");
-
-            // Read image file
-            var imageBytes = await File.ReadAllBytesAsync(input);
-            var mimeType = GetMimeType(Path.GetExtension(input));
-
-            // Create agent group chat
-            var chat = new AgentGroupChat();
+    // Create a chat for agent interaction
+    AgentGroupChat chat =
+                new(visionAgent, reviewAgent)
+                { 
+                    ExecutionSettings =
+                        new()
+                        {
+                            // Use the custom ApprovalTerminationStrategy to stop when ReviewAgent says "APPROVED"
+                            TerminationStrategy =
+                                new ApprovalTerminationStrategy()
+                                {
+                                    // Only the review agent may approve.
+                                    Agents = [reviewAgent],
+                                    // Limit total number of turns
+                                    MaximumIterations = 3,
+                                }
+                        },
+                };
 
             // Add user message with image content to the chat
             var messageContent = new ChatMessageContentItemCollection
             {
-                new TextContent($"User Question: {question}"),
+                //new TextContent($"User Question: {question}"),
                 new ImageContent(imageBytes, mimeType)
             };
 
             chat.AddChatMessage(new ChatMessageContent(AuthorRole.User, messageContent));
 
             // Get agent's response
-            Console.WriteLine("\n🤖 VisionAgent Response:");
+            Console.WriteLine("\n🤖 Group chat starting:");
             Console.WriteLine("========================");
-            
-            await foreach (var message in chat.InvokeAsync(visionAgent))
+            await foreach (var message in chat.InvokeAsync())
             {
                 if (message.Role == AuthorRole.Assistant)
                 {
                     Console.Write(message.Content);
                 }
             }
-            
+
             Console.WriteLine("\n========================\n");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"❌ VisionAgent encountered an error: {ex.Message}");
-            
-            if (ex.Message.Contains("401") || ex.Message.Contains("Unauthorized"))
-            {
-                Console.WriteLine("🔐 Authentication issue - run: az login");
-            }
-            else if (ex.Message.Contains("404") || ex.Message.Contains("NotFound"))
-            {
-                Console.WriteLine("🔍 Check your endpoint and deployment name");
-            }
-            else if (ex.Message.Contains("rate") || ex.Message.Contains("quota"))
-            {
-                Console.WriteLine("⏱️  Rate limit or quota exceeded - try again later");
-            }
-            
-            Console.WriteLine();
-        }
     }
-
-    Console.WriteLine("👋 VisionAgent signing off!");
-}
-catch (Exception ex)
-{
-    Console.WriteLine($"❌ VisionAgent initialization error: {ex.Message}");
-    Console.WriteLine("\n📋 Setup Checklist:");
-    Console.WriteLine("1. Configure Azure OpenAI settings in appsettings.json:");
-    Console.WriteLine("   - AzureOpenAI:Endpoint: Your Azure OpenAI endpoint URL");
-    Console.WriteLine("   - AzureOpenAI:DeploymentName: Your vision-capable model deployment");
-    Console.WriteLine("2. Authenticate with Azure: az login");
-    Console.WriteLine("3. Ensure your model supports vision (e.g., gpt-4o)");
-    Console.WriteLine("4. Verify your Azure OpenAI resource is accessible");
-    Console.WriteLine();
-    Console.WriteLine("📖 Example appsettings.json:");
-    Console.WriteLine("{");
-    Console.WriteLine("  \"AzureOpenAI\": {");
-    Console.WriteLine("    \"Endpoint\": \"https://myresource.openai.azure.com/\",");
-    Console.WriteLine("    \"DeploymentName\": \"gpt-4o\"");
-    Console.WriteLine("  }");
-    Console.WriteLine("}");
-}
-
-// Create VisionAgent using ChatCompletionAgent pattern
-ChatCompletionAgent CreateVisionAgent(Kernel kernel)
-{
-    // Clone kernel instance to allow for agent specific configuration
-    Kernel agentKernel = kernel.Clone();
-
-    // Define agent instructions for vision analysis
-    const string agentInstructions = """
-        You are VisionAgent, an expert image analysis AI assistant. 
-        Your role is to analyze images carefully and provide detailed, accurate descriptions.
-        
-        When analyzing images, focus on:
-        - Main subjects and objects in the image
-        - Colors, textures, and composition details
-        - Any text visible in the image
-        - Setting, environment, or background
-        - Activities or actions taking place
-        - Notable features or interesting elements
-        
-        Always be objective, factual, and thorough in your analysis.
-        Structure your response clearly and be comprehensive.
-        Always start your response with "VisionAgent Analysis:" and end with your signature "—VisionAgent"
-        """;
-
-    // Create the ChatCompletionAgent
-    return new ChatCompletionAgent()
+    catch (Exception ex)
     {
-        Name = "VisionAgent",
-        Instructions = agentInstructions,
-        Kernel = agentKernel,
-        Arguments = new KernelArguments(
-            new OpenAIPromptExecutionSettings()
-            {
-                MaxTokens = 2000,
-                Temperature = 0.1, // Low temperature for consistent, factual responses
-                TopP = 0.95,
-                FrequencyPenalty = 0.0,
-                PresencePenalty = 0.0
-            })
-    };
-}
+        Console.WriteLine($"❌ VisionAgent initialization error: {ex.Message}");
+        Console.WriteLine("\n📋 Setup Checklist:");
+        Console.WriteLine("1. Configure Azure OpenAI settings in appsettings.json:");
+        Console.WriteLine("   - AzureOpenAI:Endpoint: Your Azure OpenAI endpoint URL");
+        Console.WriteLine("   - AzureOpenAI:DeploymentName: Your vision-capable model deployment");
+        Console.WriteLine("2. Authenticate with Azure: az login");
+        Console.WriteLine("3. Ensure your model supports vision (e.g., gpt-4o)");
+        Console.WriteLine("4. Verify your Azure OpenAI resource is accessible");
+        Console.WriteLine();
+        Console.WriteLine("📖 Example appsettings.json:");
+        Console.WriteLine("{");
+        Console.WriteLine("  \"AzureOpenAI\": {");
+        Console.WriteLine("    \"Endpoint\": \"https://myresource.openai.azure.com/\",");
+        Console.WriteLine("    \"DeploymentName\": \"gpt-4o\"");
+        Console.WriteLine("  }");
+        Console.WriteLine("}");
+    }
 
 // Helper method to determine MIME type from file extension
 static string GetMimeType(string extension) => extension.ToLowerInvariant() switch
@@ -205,9 +135,10 @@ static string GetMimeType(string extension) => extension.ToLowerInvariant() swit
     _ => "image/jpeg"
 };
 
-// Helper method to check supported image formats
-static bool IsSupportedImageFormat(string filePath)
+
+sealed class ApprovalTerminationStrategy : TerminationStrategy
 {
-    var extension = Path.GetExtension(filePath).ToLowerInvariant();
-    return extension is ".jpg" or ".jpeg" or ".png" or ".gif" or ".bmp" or ".webp" or ".tiff" or ".tif";
+    // Terminate when the final message contains the term "APPROVED"
+    protected override Task<bool> ShouldAgentTerminateAsync(Microsoft.SemanticKernel.Agents.Agent agent, IReadOnlyList<ChatMessageContent> history, CancellationToken cancellationToken)
+        => Task.FromResult(history[history.Count - 1].Content?.Contains("APPROVED", StringComparison.OrdinalIgnoreCase) ?? false);
 }
